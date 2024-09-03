@@ -1,0 +1,66 @@
+# Define input files and parameters
+READS = "/path/to/fastq/files/*.fastq"
+REFERENCE = "/path/to/reference/genome.fasta"
+OUTDIR = "results"
+
+# Rules
+rule all:
+    input:
+        expand("{sample}_annotated.vcf", sample=get_samples(READS))
+
+def get_samples(reads):
+    import glob
+    return [file.split('/')[-1].replace('.fastq', '') for file in glob.glob(reads)]
+
+rule quality_control:
+    input:
+        reads="{sample}.fastq"
+    output:
+        qc_report="{sample}_qc.html"
+    shell:
+        """
+        NanoPlot --fastq {input.reads} --outdir {wildcards.sample}_qc --plots hex dot
+        """
+
+rule filter_reads:
+    input:
+        reads="{sample}.fastq"
+    output:
+        filtered="{sample}_filtered.fastq"
+    shell:
+        """
+        filtlong --min_length 1000 --keep_percent 90 {input.reads} > {output.filtered}
+        """
+
+rule align_reads:
+    input:
+        filtered="{sample}_filtered.fastq",
+        reference=REFERENCE
+    output:
+        bam="{sample}.bam"
+    shell:
+        """
+        minimap2 -ax map-ont {input.reference} {input.filtered} | samtools sort -o {output.bam}
+        samtools index {output.bam}
+        """
+
+rule variant_calling:
+    input:
+        bam="{sample}.bam",
+        reference=REFERENCE
+    output:
+        vcf="{sample}_variants.vcf"
+    shell:
+        """
+        nanopolish variants --bam {input.bam} --genome {input.reference} --outfile {output.vcf}
+        """
+
+rule variant_annotation:
+    input:
+        vcf="{sample}_variants.vcf"
+    output:
+        annotated_vcf="{sample}_annotated.vcf"
+    shell:
+        """
+        snpEff -c snpEff.config TB {input.vcf} > {output.annotated_vcf}
+        """
